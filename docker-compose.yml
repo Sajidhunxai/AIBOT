@@ -1,0 +1,61 @@
+# Local development — includes PostgreSQL in Docker.
+# Usage:
+#   cp .env.example .env
+#   docker compose up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aibottrade
+      POSTGRES_PASSWORD: aibottrade
+      POSTGRES_DB: aibottrade
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aibottrade -d aibottrade"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aibottrade-bot:latest
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aibottrade:aibottrade@postgres:5432/aibottrade
+      DATABASE_SYNC_URL: postgresql://aibottrade:aibottrade@postgres:5432/aibottrade
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: aibottrade-frontend:latest
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      - bot
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

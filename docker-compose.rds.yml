@@ -1,0 +1,48 @@
+# Production compose — bot + dashboard only (PostgreSQL on AWS RDS).
+# Usage:
+#   cp .env.rds.example .env   # edit with RDS endpoint + API keys
+#   docker compose -f docker-compose.rds.yml up -d --build
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aibottrade-bot:latest
+    env_file: .env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./models:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/status', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: aibottrade-frontend:latest
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      bot:
+        condition: service_healthy
+    restart: unless-stopped

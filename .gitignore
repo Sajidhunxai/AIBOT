@@ -1,0 +1,144 @@
+# =============================================================================
+# Secrets & environment (NEVER commit real keys)
+# =============================================================================
+.env
+.env.*
+!.env.example
+!.env.rds.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.p12
+secrets/
+credentials.json
+*credentials*.json
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =============================================================================
+# Tooling & test caches
+# =============================================================================
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# =============================================================================
+# IDE & editors
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# =============================================================================
+# Logs & runtime / local bot data
+# =============================================================================
+logs/
+*.log
+data/
+!data/.gitkeep
+models/
+!models/.gitkeep
+STATE_FILE
+bot_state.json
+**/bot_state.json
+
+# =============================================================================
+# Database (local SQLite)
+# =============================================================================
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# =============================================================================
+# Backtest & chart output
+# =============================================================================
+backtest_output/
+charts/
+*.png
+*.html
+!dashboard/frontend/public/**
+
+# =============================================================================
+# Docker (local overrides only; keep compose files tracked)
+# =============================================================================
+.docker/
+docker-compose.override.yml
+docker-compose.*.local.yml
+
+# =============================================================================
+# Node / Next.js
+# =============================================================================
+dashboard/frontend/node_modules/
+dashboard/frontend/.next/
+dashboard/frontend/out/
+dashboard/frontend/.turbo/
+dashboard/frontend/.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# =============================================================================
+# OS
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# =============================================================================
+# Alembic versions are tracked — do not ignore alembic/versions/
