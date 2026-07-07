@@ -1,0 +1,48 @@
+# Same EC2 — PostgreSQL in Docker only (no RDS).
+# Bot runs in Docker; build frontend on the host to save disk on t3.small.
+#
+# Usage on EC2:
+#   cp .env.example .env && nano .env
+#   bash scripts/ec2-deploy-small.sh
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aibottrade
+      POSTGRES_PASSWORD: aibottrade
+      POSTGRES_DB: aibottrade
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aibottrade -d aibottrade"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aibottrade-bot:latest
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aibottrade:aibottrade@postgres:5432/aibottrade
+      DATABASE_SYNC_URL: postgresql://aibottrade:aibottrade@postgres:5432/aibottrade
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

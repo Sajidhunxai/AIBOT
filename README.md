@@ -185,7 +185,35 @@ Services:
 - **bot** (API): port 8000
 - **frontend**: port 3000
 
-### AWS with RDS (recommended for production)
+### AWS EC2 only (no RDS) — small instance
+
+Use **PostgreSQL in Docker on the same EC2** (no RDS). For **t3.small** (8 GB disk), prefer the lightweight script — API + Postgres in Docker, dashboard built on the host:
+
+```bash
+git clone https://github.com/Sajidhunxai/AIBOT.git
+cd AIBOT
+cp .env.example .env
+nano .env   # Binance keys, TRADING_MODE=testnet
+bash scripts/ec2-deploy-small.sh
+```
+
+Then in a second terminal (or `tmux`):
+
+```bash
+cd ~/AIBOT/dashboard/frontend
+NEXT_PUBLIC_API_URL=http://YOUR_EC2_IP:8000 npm start
+```
+
+**Disk:** use at least **20 GB** EBS for full `docker compose up` (all services in Docker). If build fails with *no space left on device*, resize the volume in AWS EC2 → Volumes → Modify → 20 GB, then extend the filesystem on the instance.
+
+Full Docker stack on same EC2 (needs ~20 GB disk):
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+### AWS with RDS (optional)
 
 1. Create **RDS PostgreSQL** (`db.t4g.micro` or larger) in the same VPC as your EC2.
 2. Security group: allow EC2 → RDS on port **5432** only (not public internet).
