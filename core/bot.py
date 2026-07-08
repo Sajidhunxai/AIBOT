@@ -6,6 +6,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from tenacity import RetryError
+
 from ai.filter import AIFilter
 from core.account_manager import AccountManager
 from core.engine import StrategyEngine
@@ -629,6 +631,12 @@ class TradingBot:
         signals = runtime.strategy_engine.evaluate(symbol, self.market_data, tf)
         if signals:
             self._signals = (self._signals + signals)[-50:]
+            best_by_symbol: dict[str, Any] = {}
+            for signal in signals:
+                current = best_by_symbol.get(signal.symbol)
+                if current is None or signal.confidence > current.confidence:
+                    best_by_symbol[signal.symbol] = signal
+            signals = list(best_by_symbol.values())
         else:
             scan = runtime.strategy_engine.diagnose(symbol, self.market_data)
             logger.info(
@@ -872,6 +880,17 @@ class TradingBot:
             order_type = self.config.get("orders.default_type", "market")
             stop_loss = risk_result.stop_loss or signal.stop_loss
             take_profit = risk_result.take_profit or signal.take_profit
+            if not self.config.is_paper:
+                for pos in self._exchange_positions:
+                    if pos.symbol == signal.symbol and pos.side.upper() == pos_side:
+                        logger.info(
+                            "signal_skipped_existing_position",
+                            symbol=signal.symbol,
+                            side=pos_side,
+                            strategy=signal.strategy,
+                            account_id=account_id,
+                        )
+                        return
             try:
                 if order_type == "limit":
                     offset = float(self.config.get("orders.limit_offset_pct", 0.05)) / 100
@@ -919,6 +938,7 @@ class TradingBot:
                     account_id=account_id,
                 )
             except Exception as e:
+                cause = e.last_attempt.exception() if isinstance(e, RetryError) else e
                 logger.error(
                     "auto_trade_failed",
                     symbol=signal.symbol,
@@ -926,7 +946,7 @@ class TradingBot:
                     quantity=risk_result.quantity,
                     strategy=signal.strategy,
                     account_id=account_id,
-                    error=str(e),
+                    error=str(cause or e),
                 )
                 return
 

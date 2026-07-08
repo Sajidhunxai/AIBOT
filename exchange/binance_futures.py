@@ -466,25 +466,85 @@ class BinanceFuturesClient(ExchangeBase):
         self, symbol: str, client_order_id: str
     ) -> OrderResult | None:
         """Check if an order filled after a -1007 timeout (testnet backend lag)."""
-        await asyncio.sleep(2)
-        try:
-            data = await self._request(
-                "GET",
-                "/fapi/v1/order",
-                params={"symbol": symbol, "origClientOrderId": client_order_id},
-                signed=True,
-            )
-            if data.get("status") in ("FILLED", "PARTIALLY_FILLED"):
-                logger.info(
-                    "order_reconciled_after_timeout",
-                    symbol=symbol,
-                    client_order_id=client_order_id,
-                    order_id=data.get("orderId"),
+        for delay in (2, 4, 6):
+            await asyncio.sleep(delay)
+            try:
+                data = await self._request(
+                    "GET",
+                    "/fapi/v1/order",
+                    params={"symbol": symbol, "origClientOrderId": client_order_id},
+                    signed=True,
                 )
-                return self._parse_order(data)
-        except Exception as e:
-            logger.debug("order_reconcile_miss", symbol=symbol, error=str(e))
+                status = str(data.get("status", ""))
+                executed = safe_float(data.get("executedQty"))
+                if status in ("FILLED", "PARTIALLY_FILLED") or executed > 0:
+                    logger.info(
+                        "order_reconciled_after_timeout",
+                        symbol=symbol,
+                        client_order_id=client_order_id,
+                        order_id=data.get("orderId"),
+                        status=status,
+                    )
+                    return self._parse_order(data)
+            except Exception as e:
+                logger.debug("order_reconcile_miss", symbol=symbol, delay=delay, error=str(e))
         return None
+
+    async def _reconcile_open_position(
+        self,
+        symbol: str,
+        position_side: str,
+        expected_qty: float,
+    ) -> OrderResult | None:
+        """Fallback: detect a new exchange position after an ambiguous order timeout."""
+        try:
+            positions = await self.get_positions(symbol)
+        except Exception:
+            return None
+        side = position_side.upper()
+        if side == "BOTH":
+            return None
+        min_qty = max(expected_qty * 0.5, 0.0)
+        for pos in positions:
+            if pos.symbol != symbol or pos.side.upper() != side:
+                continue
+            if pos.quantity >= min_qty:
+                logger.info(
+                    "position_reconciled_after_timeout",
+                    symbol=symbol,
+                    side=side,
+                    quantity=pos.quantity,
+                )
+                order_side = "BUY" if side == "LONG" else "SELL"
+                return OrderResult(
+                    order_id="reconciled-position",
+                    symbol=symbol,
+                    side=order_side,
+                    order_type="MARKET",
+                    price=pos.entry_price,
+                    quantity=pos.quantity,
+                    status="FILLED",
+                    filled_quantity=pos.quantity,
+                    raw={"reconciled": True},
+                )
+        return None
+
+    async def _recover_market_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        position_side: str,
+        client_order_id: str,
+    ) -> OrderResult | None:
+        reconciled = await self._reconcile_client_order(symbol, client_order_id)
+        if reconciled is not None:
+            return reconciled
+        pos_side = position_side
+        if pos_side == "BOTH":
+            pos_side = "LONG" if side.upper() == "BUY" else "SHORT"
+        return await self._reconcile_open_position(symbol, pos_side, quantity)
 
     async def place_market_order(
         self,
@@ -511,9 +571,15 @@ class BinanceFuturesClient(ExchangeBase):
         try:
             data = await self._request("POST", "/fapi/v1/order", params=params, signed=True)
             return self._parse_order(data)
-        except aiohttp.ClientResponseError as e:
-            if "1007" in str(e.message):
-                reconciled = await self._reconcile_client_order(symbol, client_order_id)
+        except (aiohttp.ClientResponseError, RetryError) as e:
+            if self._is_backend_timeout_error(e):
+                reconciled = await self._recover_market_order(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    position_side=position_side,
+                    client_order_id=client_order_id,
+                )
                 if reconciled is not None:
                     return reconciled
             raise
