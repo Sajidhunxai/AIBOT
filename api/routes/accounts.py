@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 def _to_response(account: object, bot: object) -> AccountResponse:
     live_balance = None
     if not bot.config.is_paper:  # type: ignore[attr-defined]
-        live_balance = bot._balance  # type: ignore[attr-defined]
+        live_balance = bot._total_assets or bot._balance  # type: ignore[attr-defined]
     info = bot.account_manager.to_dict(  # type: ignore[attr-defined]
         account,
         running_account_ids=bot.running_accounts,  # type: ignore[attr-defined]

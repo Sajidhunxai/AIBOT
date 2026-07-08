@@ -28,6 +28,7 @@ logger = get_logger(__name__)
 
 TESTNET_BASE = "https://testnet.binancefuture.com"
 LIVE_BASE = "https://fapi.binance.com"
+_STABLECOIN_ASSETS = frozenset({"USDT", "USDC", "BUSD", "FDUSD", "USD1", "TUSD", "DAI"})
 
 
 class BinanceFuturesClient(ExchangeBase):
@@ -167,6 +168,29 @@ class BinanceFuturesClient(ExchangeBase):
         snap = await self.get_wallet_snapshot()
         return snap["balance"]
 
+    async def _margin_balance_to_usd(self, asset: str, margin_balance: float) -> float:
+        """Convert per-asset margin balance to USD (matches Binance app asset list)."""
+        if margin_balance == 0:
+            return 0.0
+        if asset in _STABLECOIN_ASSETS:
+            return margin_balance
+        symbol = f"{asset}USDT"
+        try:
+            ticker = await self.get_ticker(symbol)
+            return margin_balance * ticker.price
+        except Exception:
+            logger.warning("asset_usd_conversion_failed", asset=asset)
+            return margin_balance
+
+    async def _compute_total_assets_usd(self, account_data: dict[str, Any]) -> float:
+        """Sum margin balances in USD; non-stablecoins priced via USDT pair."""
+        total = 0.0
+        for row in account_data.get("assets", []):
+            asset = str(row.get("asset", ""))
+            margin_balance = safe_float(row.get("marginBalance"))
+            total += await self._margin_balance_to_usd(asset, margin_balance)
+        return total
+
     async def get_wallet_snapshot(self) -> dict[str, float]:
         """Return wallet balance, equity, and unrealized PnL from Binance Futures."""
         data = await self._request("GET", "/fapi/v2/account", signed=True)
@@ -175,11 +199,13 @@ class BinanceFuturesClient(ExchangeBase):
         margin = safe_float(data.get("totalMarginBalance"))
         available = safe_float(data.get("availableBalance"))
         equity = margin if margin > 0 else wallet + unrealized
+        total_assets = await self._compute_total_assets_usd(data)
         return {
             "balance": wallet,
             "equity": equity,
             "unrealized_pnl": unrealized,
             "available": available,
+            "total_assets": total_assets,
         }
 
     async def get_positions(self, symbol: str | None = None) -> list[PositionInfo]:

@@ -10,6 +10,8 @@ import { formatPakistanClock } from "@/lib/timezone";
 interface Performance {
   balance: number;
   equity: number;
+  total_assets?: number;
+  unrealized_pnl?: number;
   win_rate: number;
   profit_factor: number;
   total_trades: number;
@@ -108,15 +110,25 @@ export function AccountDashboardPanel() {
   return (
     <>
       <div className="grid grid-4" style={{ marginBottom: "1.5rem" }}>
-        <Card title={`Balance${accountLabel}`}>
+        <Card title={`Total Assets${accountLabel}`}>
           <StatBox
-            label={tradingMode === "paper" ? "USDT — updates on close" : `Binance ${tradingMode} wallet`}
+            label={
+              tradingMode === "paper"
+                ? "USDT — updates on close"
+                : `Binance ${tradingMode} (matches mobile app)`
+            }
+            value={`$${(performance?.total_assets ?? performance?.equity ?? performance?.balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+          />
+        </Card>
+        <Card title={`Futures Wallet${accountLabel}`}>
+          <StatBox
+            label="USD wallet balance (excl. BTC collateral)"
             value={`$${(performance?.balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
           />
         </Card>
-        <Card title={`Equity (Live)${accountLabel}`}>
+        <Card title={`Equity (Margin)${accountLabel}`}>
           <StatBox
-            label="Balance + open PnL"
+            label="Wallet + open PnL (API margin balance)"
             value={`$${(performance?.equity ?? performance?.balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
             color={
               (performance?.equity ?? 0) >= (performance?.balance ?? 0) ? "#22c55e" : "#ef4444"

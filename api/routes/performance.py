@@ -23,10 +23,17 @@ async def get_performance(
     open_positions = 0
 
     if bot:
+        if not bot.config.is_paper:
+            await bot.sync_exchange_state()
         status = await bot.get_status()
         balance = status["balance"]
         equity = status.get("equity", balance)
+        total_assets = float(status.get("total_assets", equity))
+        unrealized_pnl = float(status.get("unrealized_pnl", 0.0))
         open_positions = status["open_positions"]
+    else:
+        total_assets = equity
+        unrealized_pnl = 0.0
 
     account_id = bot.account_manager.active_account_id if bot else None
     account = bot.account_manager.active_account if bot else None
@@ -60,6 +67,8 @@ async def get_performance(
     return PerformanceResponse(
         balance=balance,
         equity=equity,
+        total_assets=total_assets,
+        unrealized_pnl=unrealized_pnl,
         win_rate=win_rate,
         profit_factor=profit_factor,
         max_drawdown=0.0,

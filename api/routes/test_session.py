@@ -112,6 +112,10 @@ async def _current_equity(bot: object) -> float:
     if not bot.config.is_paper:  # type: ignore[attr-defined]
         await bot.sync_exchange_state()  # type: ignore[attr-defined]
     status = await bot.get_status()  # type: ignore[attr-defined]
+    if not bot.config.is_paper:  # type: ignore[attr-defined]
+        total_assets = float(status.get("total_assets", 0))
+        if total_assets > 0:
+            return total_assets
     equity = float(status.get("equity", status["balance"]))
     if equity > 0:
         return equity

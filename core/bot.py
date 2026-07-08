@@ -103,6 +103,7 @@ class TradingBot:
         )
         self._balance: float = 0.0
         self._equity: float = 0.0
+        self._total_assets: float = 0.0
         self._unrealized_pnl: float = 0.0
         self._exchange_open_positions: int = 0
         self._exchange_positions: list[PositionInfo] = []
@@ -156,6 +157,7 @@ class TradingBot:
         snap = await self.exchange.get_wallet_snapshot()
         self._balance = snap["balance"]
         self._equity = snap["equity"]
+        self._total_assets = snap.get("total_assets", snap["equity"])
         self._unrealized_pnl = snap["unrealized_pnl"]
         positions = await self.exchange.get_positions()
         self._exchange_positions = positions
@@ -1741,6 +1743,7 @@ class TradingBot:
             "mode": self.settings.trading_mode.value,
             "balance": balance,
             "equity": equity,
+            "total_assets": self._total_assets if not self.config.is_paper else equity,
             "unrealized_pnl": unrealized,
             "symbols": self.config.symbols,
             "strategies": self.strategy_engine.active_strategies,
@@ -1753,7 +1756,7 @@ class TradingBot:
             },
             "account": self.account_manager.to_dict(
                 running_account_ids=self._running_accounts,
-                live_balance=None if self.config.is_paper else self._balance,
+                live_balance=None if self.config.is_paper else self._total_assets,
             ),
             "recent_signals": [
                 {

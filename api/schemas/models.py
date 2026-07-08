@@ -53,6 +53,8 @@ class PositionResponse(BaseModel):
 class PerformanceResponse(BaseModel):
     balance: float
     equity: float
+    total_assets: float = 0.0
+    unrealized_pnl: float = 0.0
     win_rate: float
     profit_factor: float
     max_drawdown: float
@@ -71,6 +73,7 @@ class BotStatusResponse(BaseModel):
     mode: str
     balance: float
     equity: float = 0.0
+    total_assets: float = 0.0
     unrealized_pnl: float = 0.0
     symbols: list[str]
     strategies: list[str]
