@@ -8,7 +8,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import accounts, controls, leverage, logs, market, performance, positions, risk, signals, strategies, test_session, trades
+from api.routes import accounts, ai, controls, leverage, logs, market, performance, positions, risk, signals, strategies, test_session, trades
 from api.schemas.models import BotStatusResponse
 from core.bot import TradingBot
 from database.session import init_db
@@ -61,6 +61,7 @@ app.include_router(risk.router, prefix="/api/v1")
 app.include_router(leverage.router, prefix="/api/v1")
 app.include_router(strategies.router, prefix="/api/v1")
 app.include_router(test_session.router, prefix="/api/v1")
+app.include_router(ai.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/status", response_model=BotStatusResponse)

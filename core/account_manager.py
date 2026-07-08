@@ -76,6 +76,11 @@ class AccountManager:
     def runtime_ids(self) -> list[int]:
         return list(self._runtimes.keys())
 
+    def set_ai_filter(self, ai_filter: object | None) -> None:
+        self.ai_filter = ai_filter
+        for runtime in self._runtimes.values():
+            runtime.strategy_engine.ai_filter = ai_filter  # type: ignore[assignment]
+
     def get_runtime(self, account_id: int) -> AccountRuntime:
         if account_id not in self._runtimes:
             raise KeyError(f"Runtime not loaded for account {account_id}")

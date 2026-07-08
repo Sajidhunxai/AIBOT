@@ -125,6 +125,15 @@ class TradingBot:
     def running_accounts(self) -> set[int]:
         return set(self._running_accounts)
 
+    def reload_ai_model(self, model_path: str | None = None) -> bool:
+        path = model_path or self.settings.ai_model_path
+        self.ai_filter = AIFilter(self.config.get("ai_filter", {}), model_path=path)
+        ai = self.ai_filter if self.config.ai_filter_enabled else None
+        self.account_manager.set_ai_filter(ai)
+        ready = self.ai_filter.model.is_ready
+        logger.info("ai_model_reloaded", path=path, ready=ready)
+        return ready
+
     async def initialize_accounts(self) -> None:
         """Load or create trading accounts (call once at API startup)."""
         await self.account_manager.initialize()

@@ -1,0 +1,121 @@
+---
+description: AIBotTrade project context, EC2 live setup, and session history for future changes
+alwaysApply: true
+---
+
+# AIBotTrade — Project Context
+
+Use this rule as the default reference. Do not ask the user to re-explain EC2, testnet, or deploy setup unless something changed.
+
+## Stack
+
+- **Bot/API**: Python 3.12, FastAPI, SQLAlchemy, Alembic — `uvicorn api.app:app --host 0.0.0.0 --port 8000`
+- **Dashboard**: Next.js 15 in `dashboard/frontend/` — port **3000**
+- **Exchange**: Binance Futures **testnet** (`TRADING_MODE=testnet`, `BINANCE_TESTNET=true`)
+- **DB (local dev)**: SQLite in `.env` | **DB (EC2)**: PostgreSQL in Docker
+- **Timezone**: Pakistan **PKT (UTC+5)** on charts/signals — `dashboard/frontend/src/lib/timezone.ts`
+
+## Primary account
+
+- **Account id 1**: "Demo Practice" (demo/testnet)
+- Strategies typically on: ema_cross_rsi, trend_following, scalping, breakout
+- Risk: ~60% max exposure, 4 max positions, `block_duplicate_side: true`, 10x leverage default
+
+## GitHub
+
+- Repo: https://github.com/Sajidhunxai/AIBOT.git
+- Owner: **Sajidhunxai** (push auth must be this user, not `myscribes`)
+- **Never commit `.env`** (API keys)
+
+## EC2 live server
+
+| Item | Value |
+|------|--------|
+| IP | `3.135.190.132` |
+| SSH user | `ubuntu` |
+| SSH key | `C:\Users\Samina\Downloads\aibot.pem` |
+| App path | `~/AIBOT` |
+| Dashboard URL | http://3.135.190.132:3000 |
+| API (internal) | http://127.0.0.1:8000 |
+
+### EC2 layout
+
+- **Docker**: `postgres` + `bot` via `docker-compose.yml`
+- **Dashboard**: Node on host (not Docker) — `cd ~/AIBOT/dashboard/frontend && npm start`
+- **`.env` on EC2** (not in git): real testnet keys; overrides:
+  - `APP_ENV=production`
+  - `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000` (SSR + Next rewrites proxy `/api/v1`)
+  - `API_CORS_ORIGINS` includes `http://3.135.190.132:3000`
+- **AWS Security Group**: inbound **TCP 3000** required for browser access (8000 optional)
+
+### Auto-deploy (GitHub Actions)
+
+- Workflow: `.github/workflows/deploy-ec2.yml` — runs on **push to `main`**
+- Script: `scripts/ec2-deploy-update.sh`
+- GitHub secrets: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY` (full `.pem` contents)
+- Shell scripts must use **LF line endings** (`.gitattributes`: `*.sh text eol=lf`)
+
+### Manual EC2 update
+
+```bash
+ssh -i "/c/Users/Samina/Downloads/aibot.pem" ubuntu@3.135.190.132
+cd ~/AIBOT && bash scripts/ec2-deploy-update.sh
+```
+
+### Common EC2 fixes
+
+- **`docker compose restart` does NOT reload `.env`** → use `docker compose up -d --force-recreate bot`
+- **Missing `dashboard/frontend/src/lib/`** on deploy → was gitignored (`lib/` → fixed to `/lib/`)
+- **DB migration**: `alembic/versions/002_add_account_id.py` adds `account_id` to `trades`/`signals`
+- **Trailing SL Binance -4130**: cancel existing `closePosition` STOP orders before placing new one (`exchange/binance_futures.py`, `core/bot.py`)
+- **Deploy script CRLF**: causes `set: pipefail: invalid option` on Linux
+
+## Key files
+
+| Area | Path |
+|------|------|
+| Trailing SL | `core/bot.py`, `risk/stops.py`, `exchange/binance_futures.py` |
+| PKT / countdown | `dashboard/frontend/src/lib/timezone.ts`, `TradingChart.tsx` |
+| TradingView | `TradingViewChart.tsx`, `lib/tradingview.ts` |
+| Docker | `docker-compose.yml`, `docker-compose.ec2-small.yml`, `docker/entrypoint.sh` |
+| Deploy | `scripts/ec2-deploy-update.sh`, `scripts/ec2-deploy-small.sh` |
+| Config | `config/default.yaml`, `data/accounts/1_risk.json` |
+
+## Local dev (user PC)
+
+```bash
+# API
+cd d:/apex/aibottrade && source .venv/Scripts/activate && uvicorn api.app:app --host 0.0.0.0 --port 8000
+
+# Dashboard
+cd d:/apex/aibottrade/dashboard/frontend && npm run dev
+```
+
+User often tests **AWS only** (local 3000/8000 stopped).
+
+## AI model storage
+
+Trained models are saved under **`models/`** (gitignored except `.gitkeep`). Docker mounts `./models:/app/models` so files persist on EC2 across rebuilds.
+
+```bash
+# Train from recent Binance klines + backtest labels
+python -m core.main train-ai --symbol BTCUSDT --symbol ETHUSDT --timeframe 15m
+
+# Enable filter in .env after training
+AI_FILTER_ENABLED=true
+```
+
+API: `GET /api/v1/ai/models`, `POST /api/v1/ai/train`, `POST /api/v1/ai/reload`
+
+Active model path: `AI_MODEL_PATH=models/trade_filter.joblib` (default)
+
+## Secrets on this laptop
+
+Full keys (Binance testnet, EC2 SSH path) are in **`.cursor/rules/aibottrade-secrets.local.mdc`** (gitignored, always applied). Never commit that file.
+
+## When making changes
+
+1. Edit locally in `d:\apex\aibottrade`
+2. Commit + push to `main` → auto-deploys to EC2 (if secrets configured)
+3. For `.env` or server-only changes: SSH to EC2; do not put secrets in git
+4. After DB model changes: add Alembic migration; on EC2 `alembic upgrade head` runs via `docker/entrypoint.sh`

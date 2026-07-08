@@ -7,6 +7,7 @@ import asyncio
 import signal
 import sys
 
+from ai.trainer import train_from_market
 from backtest.engine import BacktestEngine
 from core.bot import TradingBot
 from exchange.binance_futures import BinanceFuturesClient
@@ -78,10 +79,30 @@ def main() -> None:
     bt_parser.add_argument("--symbol", default="BTCUSDT")
     bt_parser.add_argument("--timeframe", default="15m")
 
+    train_parser = subparsers.add_parser("train-ai", help="Train and store AI trade filter model")
+    train_parser.add_argument("--symbol", action="append", dest="symbols")
+    train_parser.add_argument("--timeframe", default="15m")
+    train_parser.add_argument("--limit", type=int, default=1000, dest="kline_limit")
+    train_parser.add_argument("--name", default="trade_filter", dest="model_name")
+
     args = parser.parse_args()
 
     if args.command == "backtest":
         asyncio.run(run_backtest(args.symbol, args.timeframe))
+    elif args.command == "train-ai":
+        async def _train() -> None:
+            setup_logging(level="INFO")
+            result = await train_from_market(
+                symbols=args.symbols,
+                timeframe=args.timeframe,
+                kline_limit=args.kline_limit,
+                model_name=args.model_name,
+            )
+            print("\n=== AI Model Training ===")
+            for key, value in result.items():
+                print(f"  {key}: {value}")
+
+        asyncio.run(_train())
     elif args.command == "api":
         import uvicorn
 
