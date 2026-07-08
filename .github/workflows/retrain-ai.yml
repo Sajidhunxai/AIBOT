@@ -1,0 +1,42 @@
+name: Retrain AI Model
+
+on:
+  schedule:
+    # Every Sunday 02:00 UTC (07:00 PKT) — adjust cron if you prefer another time
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      kline_limit:
+        description: Klines per symbol (100–1500)
+        required: false
+        default: "1500"
+      timeframe:
+        description: Candle timeframe
+        required: false
+        default: "15m"
+
+concurrency:
+  group: retrain-ai-ec2
+  cancel-in-progress: false
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Retrain on EC2 over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            cd ~/AIBOT
+            git fetch origin main
+            git reset --hard origin/main
+            sed -i 's/\r$//' scripts/ec2-retrain-ai.sh 2>/dev/null || true
+            chmod +x scripts/ec2-retrain-ai.sh
+            export TRAIN_KLINE_LIMIT="${{ github.event.inputs.kline_limit || '1500' }}"
+            export TRAIN_TIMEFRAME="${{ github.event.inputs.timeframe || '15m' }}"
+            bash scripts/ec2-retrain-ai.sh

@@ -107,7 +107,29 @@ AI_FILTER_ENABLED=true
 
 API: `GET /api/v1/ai/models`, `POST /api/v1/ai/train`, `POST /api/v1/ai/reload`
 
+**Weekly auto-retrain:** `.github/workflows/retrain-ai.yml` (Sundays 02:00 UTC) runs `scripts/ec2-retrain-ai.sh` on EC2. Manual: GitHub → Actions → Retrain AI Model → Run workflow.
+
 Active model path: `AI_MODEL_PATH=models/trade_filter.joblib` (default)
+
+## User preferences — enable / disable via chat (not dashboard)
+
+**Local storage:** `.cursor/rules/aibottrade-preferences.local.mdc` (gitignored)
+
+The user controls features by asking the agent (e.g. *"enable AI filter on live"*, *"disable AI filter"*). The agent must:
+
+1. Update toggles in `aibottrade-preferences.local.mdc`
+2. Apply on EC2 and/or local (`.env` + `config/default.yaml`)
+3. `sudo docker compose up -d --force-recreate bot` on EC2 (or restart local API)
+
+### Current toggles (see preferences file for live values)
+
+| Feature | Preference key | EC2 files when enabled |
+|---------|----------------|------------------------|
+| AI filter in trades | `use_in_trades` | `.env`: `AI_FILTER_ENABLED=true`, `default.yaml`: `ai_filter.enabled: true` |
+| AI min confidence | `min_confidence` | `default.yaml`: `ai_filter.min_confidence` |
+| Weekly retrain | `scheduled` | GitHub workflow only — no runtime toggle |
+
+**Do not** ask the user to use the dashboard for these toggles unless they prefer it.
 
 ## Secrets on this laptop
 
