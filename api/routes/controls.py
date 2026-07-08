@@ -141,10 +141,9 @@ async def start_bot(request: Request) -> dict[str, str]:
         raise HTTPException(status_code=400, detail="No active account")
     if aid in bot.running_accounts:
         return {"status": "already_running", "message": "Active account is already trading"}
-    import asyncio
 
     account = bot.account_manager.active_account
-    asyncio.create_task(bot.start_account(aid))
+    await bot.start_account(aid)
     account_name = account.name if account else "active account"
     return {
         "status": "started",

@@ -73,6 +73,34 @@ def parse_started_at(value: str | None) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def dedupe_closed_trades(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one row per symbol/side/close time (drops duplicate DB sync rows)."""
+    best: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for trade in trades:
+        closed = trade.get("closed_at")
+        if closed is None:
+            continue
+        if isinstance(closed, datetime):
+            closed_key = closed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            closed_key = str(closed).replace("Z", "+00:00")[:19]
+        key = (str(trade.get("symbol", "")), str(trade.get("side", "")), closed_key)
+        pnl = float(trade.get("pnl") or 0)
+        existing = best.get(key)
+        if existing is None:
+            best[key] = trade
+            continue
+        existing_pnl = float(existing.get("pnl") or 0)
+        if abs(pnl) > abs(existing_pnl):
+            best[key] = trade
+        elif (
+            abs(pnl) == abs(existing_pnl)
+            and str(trade.get("strategy", "")) != "binance_fill"
+        ):
+            best[key] = trade
+    return list(best.values())
+
+
 def compute_max_drawdown_pct(starting_balance: float, session_trades: list[dict[str, Any]]) -> float:
     """Peak-to-trough drawdown on equity built from session closed trades (chronological)."""
     if starting_balance <= 0:

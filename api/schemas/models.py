@@ -262,6 +262,8 @@ class TestSessionResponse(BaseModel):
     days_running: float
     starting_balance: float
     current_equity: float
+    wallet_balance: float | None = None
+    unrealized_pnl: float | None = None
     return_pct: float
     session_pnl: float
     max_drawdown_pct: float

@@ -13,6 +13,8 @@ interface TestSession {
   days_running: number;
   starting_balance: number;
   current_equity: number;
+  wallet_balance?: number | null;
+  unrealized_pnl?: number | null;
   return_pct: number;
   session_pnl: number;
   max_drawdown_pct: number;
@@ -129,6 +131,13 @@ export function TestModePanel() {
         </p>
       )}
 
+      {session.mode !== "paper" && (
+        <p className="risk-hint test-mode-hint">
+          Return % uses live equity vs your baseline. Session PnL counts closed trades since the
+          baseline start time only.
+        </p>
+      )}
+
       <div className="grid grid-4 test-mode-stats">
         <StatBox label="Started" value={startDate} />
         <StatBox label="Days running" value={String(session.days_running)} />
@@ -153,6 +162,19 @@ export function TestModePanel() {
           label="Current equity"
           value={`$${session.current_equity.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
         />
+        {session.mode !== "paper" && session.wallet_balance != null && (
+          <StatBox
+            label="Wallet (Binance)"
+            value={`$${session.wallet_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+          />
+        )}
+        {session.mode !== "paper" && session.unrealized_pnl != null && (
+          <StatBox
+            label="Open PnL"
+            value={`$${session.unrealized_pnl.toFixed(2)}`}
+            color={session.unrealized_pnl >= 0 ? "#22c55e" : "#ef4444"}
+          />
+        )}
         <StatBox
           label="Session PnL (closed)"
           value={`$${session.session_pnl.toFixed(2)}`}

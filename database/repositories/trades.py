@@ -91,6 +91,7 @@ class TradeRepository:
         pnl: float,
         pnl_pct: float,
         commission: float = 0.0,
+        closed_at: datetime | None = None,
     ) -> Trade | None:
         result = await self.session.execute(select(Trade).where(Trade.id == trade_id))
         trade = result.scalar_one_or_none()
@@ -101,7 +102,7 @@ class TradeRepository:
         trade.pnl_pct = pnl_pct
         trade.commission = commission
         trade.status = TradeStatus.CLOSED
-        trade.closed_at = datetime.now(UTC)
+        trade.closed_at = closed_at or datetime.now(UTC)
         await self.session.flush()
         return trade
 

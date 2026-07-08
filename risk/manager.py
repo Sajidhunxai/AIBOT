@@ -238,9 +238,6 @@ class RiskManager:
         if quantity <= 0:
             return RiskCheckResult(False, "position_size_zero")
 
-        if min_notional > 0 and quantity * signal.price < min_notional:
-            return RiskCheckResult(False, "below_min_notional")
-
         max_qty = self._max_quantity_for_exposure(signal.price, context, lot_step)
         if max_qty is not None and quantity > max_qty:
             quantity = max_qty

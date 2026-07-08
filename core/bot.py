@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ai.filter import AIFilter
@@ -52,6 +52,7 @@ class TradingBot:
         self.settings = self.config.settings
         self._running = False
         self._tasks: list[asyncio.Task[None]] = []
+        self._engine_lock = asyncio.Lock()
 
         setup_logging(
             level=self.config.get("logging.level", self.settings.log_level),
@@ -165,6 +166,143 @@ class TradingBot:
             risk.set_balance(self._equity)
             if risk._peak_equity < self._equity:
                 risk._peak_equity = self._equity
+        for account_id in list(self._running_accounts):
+            await self._sync_db_trades_with_exchange(account_id)
+
+    async def _resolve_exchange_close(
+        self, trade: Trade
+    ) -> tuple[float, float, datetime]:
+        """Find exit price and realized PnL from Binance fills after trade opened."""
+        symbol = trade.symbol
+        side = trade.side.value.upper()
+        opened_at = _as_utc_aware(trade.opened_at) - timedelta(seconds=30)
+
+        try:
+            fills = await self.exchange.get_user_trades(symbol, limit=100)
+        except Exception as e:
+            logger.warning("exchange_close_fills_failed", symbol=symbol, error=str(e))
+            fills = []
+
+        close_fills: list[tuple[float, float, datetime]] = []
+        for fill in fills:
+            pnl = safe_float(fill.get("realizedPnl"))
+            if abs(pnl) < 1e-12:
+                continue
+            pos_side = str(fill.get("positionSide", "")).upper()
+            if pos_side not in ("LONG", "SHORT"):
+                order_side = str(fill.get("side", "")).upper()
+                pos_side = "LONG" if order_side == "BUY" else "SHORT"
+            if pos_side != side:
+                continue
+            ts_ms = int(fill.get("time", 0))
+            ts = datetime.fromtimestamp(ts_ms / 1000, tz=UTC) if ts_ms else datetime.min.replace(tzinfo=UTC)
+            if ts >= opened_at:
+                close_fills.append((safe_float(fill.get("price")), pnl, ts))
+
+        if close_fills:
+            close_fills.sort(key=lambda row: row[2])
+            total_pnl = sum(row[1] for row in close_fills)
+            exit_price, _, closed_at = close_fills[-1]
+            return exit_price, total_pnl, closed_at
+
+        try:
+            items = await self.exchange.get_income_history("REALIZED_PNL", symbol=symbol, limit=50)
+        except Exception:
+            items = []
+        for item in sorted(items, key=lambda row: int(row.get("time", 0)), reverse=True):
+            ts_ms = int(item.get("time", 0))
+            if not ts_ms:
+                continue
+            ts = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
+            if ts >= opened_at:
+                pnl = safe_float(item.get("income"))
+                if abs(pnl) > 0:
+                    return float(trade.entry_price or 0.0), pnl, ts
+
+        return float(trade.entry_price or 0.0), 0.0, datetime.now(UTC)
+
+    async def _sync_db_trades_with_exchange(self, account_id: int) -> None:
+        """Close stale DB rows when exchange positions disappear; dedupe extras."""
+        if self.config.is_paper:
+            return
+
+        exchange_keys = {
+            (pos.symbol, pos.side.upper()): pos
+            for pos in self._exchange_positions
+            if pos.quantity > 0
+        }
+
+        try:
+            async with get_async_session() as session:
+                repo = TradeRepository(session)
+                open_trades = [
+                    trade
+                    for trade in await repo.get_open_trades(account_id=account_id)
+                    if not trade.is_paper
+                ]
+
+                by_key: dict[tuple[str, str], list[Trade]] = {}
+                for trade in open_trades:
+                    key = (trade.symbol, trade.side.value.upper())
+                    by_key.setdefault(key, []).append(trade)
+
+                for key, trades in by_key.items():
+                    if key not in exchange_keys:
+                        trades.sort(
+                            key=lambda trade: _as_utc_aware(trade.opened_at),
+                        )
+                        exit_price, total_pnl, closed_at = await self._resolve_exchange_close(
+                            trades[-1]
+                        )
+                        for index, trade in enumerate(trades):
+                            pnl = total_pnl if index == len(trades) - 1 else 0.0
+                            pnl_pct = (
+                                (pnl / (trade.entry_price * trade.quantity) * 100)
+                                if pnl and trade.entry_price and trade.quantity
+                                else 0.0
+                            )
+                            await repo.close_trade(
+                                trade.id,
+                                exit_price,
+                                pnl,
+                                pnl_pct,
+                                closed_at=closed_at,
+                            )
+                            logger.info(
+                                "db_trade_closed_exchange_sync",
+                                trade_id=trade.id,
+                                symbol=trade.symbol,
+                                side=trade.side.value,
+                                account_id=account_id,
+                                exit_price=exit_price,
+                                pnl=pnl,
+                            )
+                        runtime = self.account_manager.get_runtime(account_id)
+                        daily_pnl = await repo.get_daily_pnl(account_id)
+                        runtime.risk_manager.update_daily_pnl(daily_pnl)
+                        continue
+
+                    if len(trades) <= 1:
+                        continue
+
+                    position = exchange_keys[key]
+                    trades.sort(key=lambda trade: abs(trade.quantity - position.quantity))
+                    for duplicate in trades[1:]:
+                        await repo.close_trade(
+                            duplicate.id,
+                            float(duplicate.entry_price or 0.0),
+                            0.0,
+                            0.0,
+                        )
+                        logger.info(
+                            "db_duplicate_open_closed",
+                            trade_id=duplicate.id,
+                            symbol=duplicate.symbol,
+                            side=duplicate.side.value,
+                            account_id=account_id,
+                        )
+        except Exception as e:
+            logger.error("db_trade_exchange_sync_failed", account_id=account_id, error=str(e))
 
     def save_account_risk_settings(self, account_id: int | None = None) -> None:
         aid = account_id or self.account_manager.active_account_id
@@ -240,26 +378,35 @@ class TradingBot:
         self.account_manager.reload_strategy_for_account(aid)
 
     async def _ensure_engine_running(self) -> None:
-        if self._running:
-            return
-        logger.info(
-            "bot_engine_starting",
-            mode=self.settings.trading_mode.value,
-            symbols=self.config.symbols,
-        )
-        await self.exchange.connect()
-        if not self.config.is_paper:
-            if self.config.hedge_mode:
-                await self.exchange.set_hedge_mode(True)
-            for symbol in self.config.symbols:
-                await self.exchange.set_leverage(
-                    symbol,
-                    self.leverage_for_symbol(symbol, account_id=self.account_manager.active_account_id),
-                )
-        await self.market_data.initialize()
-        self._running = True
-        self._tasks.append(asyncio.create_task(self._main_loop()))
-        self._tasks.append(asyncio.create_task(self._report_loop()))
+        async with self._engine_lock:
+            alive = self._running and any(not task.done() for task in self._tasks)
+            if alive:
+                return
+            if self._tasks:
+                self._tasks.clear()
+            self._running = False
+
+            logger.info(
+                "bot_engine_starting",
+                mode=self.settings.trading_mode.value,
+                symbols=self.config.symbols,
+            )
+            await self.exchange.connect()
+            if not self.config.is_paper:
+                if self.config.hedge_mode:
+                    await self.exchange.set_hedge_mode(True)
+                for symbol in self.config.symbols:
+                    await self.exchange.set_leverage(
+                        symbol,
+                        self.leverage_for_symbol(
+                            symbol, account_id=self.account_manager.active_account_id
+                        ),
+                    )
+            self.market_data.reset_strategy_eval_gate()
+            await self.market_data.initialize()
+            self._running = True
+            self._tasks.append(asyncio.create_task(self._main_loop()))
+            self._tasks.append(asyncio.create_task(self._report_loop()))
 
     async def _sync_account_risk_state(self, account_id: int) -> None:
         runtime = self.account_manager.get_runtime(account_id)
@@ -337,26 +484,27 @@ class TradingBot:
 
     async def stop(self, *, notify: bool = True) -> None:
         """Gracefully stop the bot engine and all account trading."""
-        running = list(self._running_accounts)
-        for aid in running:
-            self.account_manager.save_runtime(aid)
-            self.save_account_risk_settings(aid)
-            self.save_account_strategy_settings(aid)
-        self._running_accounts.clear()
-        self._running = False
-        tasks = list(self._tasks)
-        self._tasks.clear()
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        await self.ws_manager.stop_all()
-        if not self.config.is_paper:
-            await self.exchange.disconnect()
-        self._save_state()
-        if notify:
-            await self.telegram.send_message("🛑 AIBotTrade stopped")
-        logger.info("bot_stopped")
+        async with self._engine_lock:
+            running = list(self._running_accounts)
+            for aid in running:
+                self.account_manager.save_runtime(aid)
+                self.save_account_risk_settings(aid)
+                self.save_account_strategy_settings(aid)
+            self._running_accounts.clear()
+            self._running = False
+            tasks = list(self._tasks)
+            self._tasks.clear()
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            await self.ws_manager.stop_all()
+            if not self.config.is_paper:
+                await self.exchange.disconnect()
+            self._save_state()
+            if notify:
+                await self.telegram.send_message("🛑 AIBotTrade stopped")
+            logger.info("bot_stopped")
 
     async def switch_account(self, account_id: int, *, start: bool = False) -> dict[str, Any]:
         """Switch dashboard focus; optionally start trading on this account (others keep running)."""
@@ -1145,6 +1293,21 @@ class TradingBot:
         try:
             async with get_async_session() as session:
                 repo = TradeRepository(session)
+                if not is_paper:
+                    for existing in await repo.get_open_trades(
+                        symbol=symbol, account_id=account_id
+                    ):
+                        if existing.is_paper:
+                            continue
+                        if existing.side.value.upper() == side.upper():
+                            logger.warning(
+                                "duplicate_open_trade_skipped",
+                                symbol=symbol,
+                                side=side,
+                                account_id=account_id,
+                                existing_trade_id=existing.id,
+                            )
+                            return
                 await repo.create(
                     Trade(
                         symbol=symbol,
@@ -1381,18 +1544,22 @@ class TradingBot:
             except Exception as e:
                 logger.warning("exchange_user_trades_failed", symbol=symbol, error=str(e))
                 continue
-            for fill in fills:
+            fills_sorted = sorted(fills, key=lambda fill: int(fill.get("time", 0)))
+            open_prices: dict[str, list[float]] = {"LONG": [], "SHORT": []}
+            for fill in fills_sorted:
                 pnl = safe_float(fill.get("realizedPnl"))
-                if pnl == 0:
-                    continue
-                ts_ms = int(fill.get("time", 0))
-                closed_at = datetime.fromtimestamp(ts_ms / 1000, tz=UTC) if ts_ms else datetime.now(UTC)
                 order_side = str(fill.get("side", "BUY")).upper()
                 pos_side = str(fill.get("positionSide", "")).upper()
                 if pos_side not in ("LONG", "SHORT"):
                     pos_side = "LONG" if order_side == "BUY" else "SHORT"
                 price = safe_float(fill.get("price"))
                 qty = safe_float(fill.get("qty"))
+                if abs(pnl) < 1e-12:
+                    open_prices[pos_side].append(price)
+                    continue
+                entry_price = open_prices[pos_side].pop() if open_prices[pos_side] else price
+                ts_ms = int(fill.get("time", 0))
+                closed_at = datetime.fromtimestamp(ts_ms / 1000, tz=UTC) if ts_ms else datetime.now(UTC)
                 trades.append(
                     {
                         "id": -(idx + 1),
@@ -1400,7 +1567,7 @@ class TradingBot:
                         "side": pos_side,
                         "status": "CLOSED",
                         "strategy": "binance_fill",
-                        "entry_price": price,
+                        "entry_price": entry_price,
                         "exit_price": price,
                         "quantity": qty,
                         "pnl": pnl,
@@ -1434,7 +1601,7 @@ class TradingBot:
     async def get_merged_closed_trades(self, limit: int = 100) -> list[dict[str, Any]]:
         """Closed trades from DB (paper) plus Binance history (testnet/live)."""
         aid = self.account_manager.active_account_id
-        db_account_id = aid if self.config.is_paper else None
+        db_account_id = aid
         db_rows: list[dict[str, Any]] = []
         try:
             async with get_async_session() as session:
@@ -1540,6 +1707,10 @@ class TradingBot:
 
     async def get_status(self) -> dict[str, Any]:
         """Return current bot status for API."""
+        if self._running_accounts:
+            alive = self._running and any(not task.done() for task in self._tasks)
+            if not alive:
+                await self._ensure_engine_running()
         if not self.config.is_paper:
             try:
                 await self.sync_exchange_state()

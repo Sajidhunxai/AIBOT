@@ -139,6 +139,10 @@ class MarketDataManager:
         if is_closed:
             self._pending_bar_close.add((symbol, timeframe))
 
+    def reset_strategy_eval_gate(self) -> None:
+        """Re-arm one immediate strategy pass per symbol after engine (re)start."""
+        self._initial_strategy_eval.clear()
+
     def should_evaluate_strategies(self, symbol: str, timeframe: str) -> bool:
         """Run strategies on startup and when a candle closes (avoids repeat entries)."""
         key = (symbol, timeframe)
