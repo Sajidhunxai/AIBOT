@@ -110,6 +110,7 @@ class TradingBot:
         self._signals: list[Signal] = []
         self._running_accounts: set[int] = set()
         self._account_names: dict[int, str] = {}
+        self._sync_locks: dict[int, asyncio.Lock] = {}
 
     @property
     def paper_trader(self) -> PaperTrader:
@@ -228,6 +229,13 @@ class TradingBot:
         if self.config.is_paper:
             return
 
+        lock = self._sync_locks.setdefault(account_id, asyncio.Lock())
+        if lock.locked():
+            return
+        async with lock:
+            await self._sync_db_trades_with_exchange_locked(account_id)
+
+    async def _sync_db_trades_with_exchange_locked(self, account_id: int) -> None:
         exchange_keys = {
             (pos.symbol, pos.side.upper()): pos
             for pos in self._exchange_positions

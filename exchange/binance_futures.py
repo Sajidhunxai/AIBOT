@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import time
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
@@ -57,7 +59,7 @@ class BinanceFuturesClient(ExchangeBase):
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 headers={"X-MBX-APIKEY": self.api_key},
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=aiohttp.ClientTimeout(total=60, connect=15),
             )
             logger.info("binance_connected", testnet=self.testnet)
         await self._sync_server_time()
@@ -151,7 +153,14 @@ class BinanceFuturesClient(ExchangeBase):
                             message=str(data),
                         )
                         continue
-                    logger.error("binance_api_error", status=resp.status, data=data)
+                    if code == -1007:
+                        logger.warning(
+                            "binance_backend_timeout",
+                            endpoint=endpoint,
+                            msg=data.get("msg") if isinstance(data, dict) else None,
+                        )
+                    else:
+                        logger.error("binance_api_error", status=resp.status, data=data)
                     raise aiohttp.ClientResponseError(
                         resp.request_info,
                         resp.history,
@@ -453,6 +462,30 @@ class BinanceFuturesClient(ExchangeBase):
             except Exception as e:
                 logger.debug("cancel_open_orders_skipped", symbol=symbol, endpoint=endpoint, error=str(e))
 
+    async def _reconcile_client_order(
+        self, symbol: str, client_order_id: str
+    ) -> OrderResult | None:
+        """Check if an order filled after a -1007 timeout (testnet backend lag)."""
+        await asyncio.sleep(2)
+        try:
+            data = await self._request(
+                "GET",
+                "/fapi/v1/order",
+                params={"symbol": symbol, "origClientOrderId": client_order_id},
+                signed=True,
+            )
+            if data.get("status") in ("FILLED", "PARTIALLY_FILLED"):
+                logger.info(
+                    "order_reconciled_after_timeout",
+                    symbol=symbol,
+                    client_order_id=client_order_id,
+                    order_id=data.get("orderId"),
+                )
+                return self._parse_order(data)
+        except Exception as e:
+            logger.debug("order_reconcile_miss", symbol=symbol, error=str(e))
+        return None
+
     async def place_market_order(
         self,
         symbol: str,
@@ -465,16 +498,25 @@ class BinanceFuturesClient(ExchangeBase):
             quantity = await self.order_quantity(symbol, quantity, entry_price)
         else:
             await self.get_symbol_filters(symbol)
+        client_order_id = f"aibot{uuid.uuid4().hex[:24]}"
         params: dict[str, Any] = {
             "symbol": symbol,
             "side": side.upper(),
             "type": "MARKET",
             "quantity": self.format_quantity(symbol, quantity, for_order=True),
+            "newClientOrderId": client_order_id,
         }
         if position_side != "BOTH":
             params["positionSide"] = position_side
-        data = await self._request("POST", "/fapi/v1/order", params=params, signed=True)
-        return self._parse_order(data)
+        try:
+            data = await self._request("POST", "/fapi/v1/order", params=params, signed=True)
+            return self._parse_order(data)
+        except aiohttp.ClientResponseError as e:
+            if "1007" in str(e.message):
+                reconciled = await self._reconcile_client_order(symbol, client_order_id)
+                if reconciled is not None:
+                    return reconciled
+            raise
 
     async def close_position_market(
         self,
