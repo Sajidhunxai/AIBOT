@@ -21,22 +21,16 @@ concurrency:
 
 jobs:
   retrain:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
-      - name: Retrain on EC2 over SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 20m
-          script: |
-            cd ~/AIBOT
-            git fetch origin main
-            git reset --hard origin/main
-            sed -i 's/\r$//' scripts/ec2-retrain-ai.sh 2>/dev/null || true
-            chmod +x scripts/ec2-retrain-ai.sh
-            export TRAIN_KLINE_LIMIT="${{ github.event.inputs.kline_limit || '1500' }}"
-            export TRAIN_TIMEFRAME="${{ github.event.inputs.timeframe || '15m' }}"
-            bash scripts/ec2-retrain-ai.sh
+      - name: Retrain on server
+        run: |
+          cd ~/AIBOT
+          git fetch origin main
+          git reset --hard origin/main
+          sed -i 's/\r$//' scripts/ec2-retrain-ai.sh 2>/dev/null || true
+          chmod +x scripts/ec2-retrain-ai.sh
+          export TRAIN_KLINE_LIMIT="${{ github.event.inputs.kline_limit || '1500' }}"
+          export TRAIN_TIMEFRAME="${{ github.event.inputs.timeframe || '15m' }}"
+          bash scripts/ec2-retrain-ai.sh
