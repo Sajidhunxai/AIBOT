@@ -344,6 +344,81 @@ class BinanceFuturesClient(ExchangeBase):
         await self._request("DELETE", "/fapi/v1/algoOrder", params=params, signed=True)
         return True
 
+    async def get_open_algo_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = symbol
+        data = await self._request("GET", "/fapi/v1/openAlgoOrders", params=params, signed=True)
+        if isinstance(data, list):
+            return data
+        return list(data.get("orders", []) or data.get("data", []))
+
+    @staticmethod
+    def _algo_order_matches_position(
+        order: dict[str, Any],
+        position_side: str,
+        *,
+        hedge_mode: bool,
+        order_types: tuple[str, ...],
+    ) -> bool:
+        otype = str(order.get("orderType", order.get("type", ""))).upper()
+        normalized = {t.upper().replace("_", "") for t in order_types}
+        if otype.replace("_", "") not in normalized:
+            return False
+        close_pos = order.get("closePosition", order.get("close_position", False))
+        if str(close_pos).lower() not in ("true", "1"):
+            return False
+        if hedge_mode:
+            ps = str(order.get("positionSide", "BOTH")).upper()
+            if ps != position_side.upper():
+                return False
+        return True
+
+    async def cancel_position_conditional_orders(
+        self,
+        symbol: str,
+        position_side: str,
+        *,
+        order_types: tuple[str, ...] = ("STOP_MARKET", "STOP"),
+        hedge_mode: bool = True,
+    ) -> int:
+        """Cancel open closePosition algo orders for one position side."""
+        cancelled = 0
+        for order in await self.get_open_algo_orders(symbol):
+            if not self._algo_order_matches_position(
+                order, position_side, hedge_mode=hedge_mode, order_types=order_types
+            ):
+                continue
+            algo_id = order.get("algoId")
+            if not algo_id:
+                continue
+            try:
+                await self.cancel_algo_order(symbol, str(algo_id))
+                cancelled += 1
+            except Exception as e:
+                logger.warning(
+                    "cancel_algo_order_failed",
+                    symbol=symbol,
+                    algo_id=algo_id,
+                    error=str(e),
+                )
+        return cancelled
+
+    async def has_position_conditional_order(
+        self,
+        symbol: str,
+        position_side: str,
+        *,
+        order_types: tuple[str, ...] = ("STOP_MARKET", "STOP"),
+        hedge_mode: bool = True,
+    ) -> bool:
+        for order in await self.get_open_algo_orders(symbol):
+            if self._algo_order_matches_position(
+                order, position_side, hedge_mode=hedge_mode, order_types=order_types
+            ):
+                return True
+        return False
+
     async def cancel_all_open_orders(self, symbol: str) -> None:
         params = {"symbol": symbol}
         for endpoint in ("/fapi/v1/allOpenOrders", "/fapi/v1/algoOpenOrders"):

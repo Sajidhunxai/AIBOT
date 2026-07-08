@@ -917,6 +917,7 @@ class TradingBot:
         old_sl_id: str | None,
         new_sl: float,
     ) -> str | None:
+        hedge = self.config.hedge_mode
         if old_sl_id:
             try:
                 await self.exchange.cancel_algo_order(symbol, old_sl_id)
@@ -927,6 +928,28 @@ class TradingBot:
                     algo_id=old_sl_id,
                     error=str(e),
                 )
+
+        await self.exchange.cancel_position_conditional_orders(
+            symbol,
+            position_side,
+            order_types=("STOP_MARKET", "STOP"),
+            hedge_mode=hedge,
+        )
+        await asyncio.sleep(0.4)
+
+        if await self.exchange.has_position_conditional_order(
+            symbol,
+            position_side,
+            order_types=("STOP_MARKET", "STOP"),
+            hedge_mode=hedge,
+        ):
+            logger.warning(
+                "trailing_sl_existing_order",
+                symbol=symbol,
+                side=position_side,
+                message="Stop order still open after cancel; skipping replace",
+            )
+            return old_sl_id
 
         mark = self.market_data.get_latest_price(symbol)
         if mark <= 0:
@@ -949,7 +972,7 @@ class TradingBot:
             symbol,
             position_side,
             new_sl,
-            hedge_mode=self.config.hedge_mode,
+            hedge_mode=hedge,
         )
         return order.order_id
 
@@ -970,44 +993,71 @@ class TradingBot:
             async with get_async_session() as session:
                 repo = TradeRepository(session)
                 trades = await repo.get_open_trades(symbol=symbol, account_id=account_id)
+                by_side: dict[str, list[Any]] = {}
                 for trade in trades:
                     if trade.is_paper:
                         continue
-                    side = trade.side.value
+                    side = trade.side.value.upper()
                     if not self._exchange_has_position(symbol, side):
                         continue
                     if not trade.stop_loss or not trade.take_profit:
                         continue
+                    by_side.setdefault(side, []).append(trade)
 
-                    meta = dict(trade.metadata_json or {})
-                    stop_state = stop_state_from_dict(
-                        meta.get("stop_state"),
-                        entry_price=trade.entry_price,
-                        stop_loss=trade.stop_loss,
-                        take_profit=trade.take_profit,
-                    )
-                    if stop_state is None:
+                for side, side_trades in by_side.items():
+                    best: dict[str, Any] | None = None
+                    old_sl_id: str | None = None
+
+                    for trade in side_trades:
+                        meta = dict(trade.metadata_json or {})
+                        stop_state = stop_state_from_dict(
+                            meta.get("stop_state"),
+                            entry_price=trade.entry_price,
+                            stop_loss=trade.stop_loss,
+                            take_profit=trade.take_profit,
+                        )
+                        if stop_state is None:
+                            continue
+
+                        old_sl = trade.stop_loss
+                        updated = risk.stop_manager.update_trailing(
+                            stop_state, side, price, atr_val
+                        )
+                        new_sl = updated.stop_loss
+                        meta["stop_state"] = stop_state_to_dict(updated)
+
+                        if not self._sl_improved(side, old_sl, new_sl, min_move_pct):
+                            await repo.update_open_trade_stops(trade.id, metadata_json=meta)
+                            continue
+
+                        sl_id = meta.get("sl_order_id")
+                        if sl_id and not old_sl_id:
+                            old_sl_id = str(sl_id)
+
+                        candidate = {
+                            "trade": trade,
+                            "meta": meta,
+                            "old_sl": old_sl,
+                            "new_sl": new_sl,
+                            "updated": updated,
+                        }
+                        if best is None:
+                            best = candidate
+                        elif side in ("LONG", "BUY"):
+                            if new_sl > best["new_sl"]:
+                                best = candidate
+                        elif new_sl < best["new_sl"]:
+                            best = candidate
+
+                    if best is None:
                         continue
 
-                    old_sl = trade.stop_loss
-                    updated = risk.stop_manager.update_trailing(
-                        stop_state, side, price, atr_val
-                    )
-                    new_sl = updated.stop_loss
-                    meta["stop_state"] = stop_state_to_dict(updated)
-
-                    if not self._sl_improved(side, old_sl, new_sl, min_move_pct):
-                        await repo.update_open_trade_stops(trade.id, metadata_json=meta)
-                        continue
-
-                    pos_side = side
-                    old_sl_id = meta.get("sl_order_id")
                     try:
                         new_sl_id = await self._replace_exchange_stop_loss(
                             symbol=symbol,
-                            position_side=pos_side,
-                            old_sl_id=str(old_sl_id) if old_sl_id else None,
-                            new_sl=new_sl,
+                            position_side=side,
+                            old_sl_id=old_sl_id,
+                            new_sl=float(best["new_sl"]),
                         )
                     except Exception as e:
                         logger.error(
@@ -1015,28 +1065,44 @@ class TradingBot:
                             symbol=symbol,
                             side=side,
                             account_id=account_id,
-                            trade_id=trade.id,
+                            trade_id=best["trade"].id,
                             error=str(e),
                         )
                         continue
 
-                    meta["sl_order_id"] = new_sl_id
-                    await repo.update_open_trade_stops(
-                        trade.id,
-                        stop_loss=new_sl,
-                        trailing_stop=updated.trailing_stop,
-                        metadata_json=meta,
-                    )
+                    for trade in side_trades:
+                        meta = dict(trade.metadata_json or {})
+                        stop_state = stop_state_from_dict(
+                            meta.get("stop_state"),
+                            entry_price=trade.entry_price,
+                            stop_loss=trade.stop_loss,
+                            take_profit=trade.take_profit,
+                        )
+                        if stop_state is None:
+                            continue
+                        updated = risk.stop_manager.update_trailing(
+                            stop_state, side, price, atr_val
+                        )
+                        meta["stop_state"] = stop_state_to_dict(updated)
+                        meta["sl_order_id"] = new_sl_id
+                        await repo.update_open_trade_stops(
+                            trade.id,
+                            stop_loss=float(best["new_sl"]),
+                            trailing_stop=updated.trailing_stop,
+                            metadata_json=meta,
+                        )
+
                     logger.info(
                         "exchange_trailing_sl_updated",
                         symbol=symbol,
                         side=side,
                         account_id=account_id,
-                        trade_id=trade.id,
-                        old_stop=old_sl,
-                        new_stop=new_sl,
-                        break_even=updated.break_even_triggered,
+                        trade_id=best["trade"].id,
+                        old_stop=best["old_sl"],
+                        new_stop=best["new_sl"],
+                        break_even=best["updated"].break_even_triggered,
                         order_id=new_sl_id,
+                        trades_synced=len(side_trades),
                     )
         except Exception as e:
             logger.error(
