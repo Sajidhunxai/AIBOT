@@ -344,8 +344,17 @@ class TradingBot:
         await self.exchange.connect()
         for symbol in self.config.symbols:
             lev = self.leverage_for_symbol(symbol, account_id=aid)
-            await self.exchange.set_leverage(symbol, lev)
-            logger.info("exchange_leverage_set", symbol=symbol, leverage=lev, account_id=aid)
+            try:
+                await self.exchange.set_leverage(symbol, lev)
+                logger.info("exchange_leverage_set", symbol=symbol, leverage=lev, account_id=aid)
+            except Exception as e:
+                logger.warning(
+                    "exchange_leverage_set_failed",
+                    symbol=symbol,
+                    leverage=lev,
+                    account_id=aid,
+                    error=str(e),
+                )
 
     def reload_account_risk(self, account_id: int | None = None) -> None:
         """Rebuild risk manager for one account from saved settings."""
@@ -405,13 +414,6 @@ class TradingBot:
             if not self.config.is_paper:
                 if self.config.hedge_mode:
                     await self.exchange.set_hedge_mode(True)
-                for symbol in self.config.symbols:
-                    await self.exchange.set_leverage(
-                        symbol,
-                        self.leverage_for_symbol(
-                            symbol, account_id=self.account_manager.active_account_id
-                        ),
-                    )
             self.market_data.reset_strategy_eval_gate()
             await self.market_data.initialize()
             self._running = True

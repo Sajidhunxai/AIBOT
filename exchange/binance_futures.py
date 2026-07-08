@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 
 from exchange.base import ExchangeBase, OrderResult, PositionInfo, TickerInfo
 from exchange.rate_limiter import RateLimiter
@@ -629,13 +629,34 @@ class BinanceFuturesClient(ExchangeBase):
 
     async def set_leverage(self, symbol: str, leverage: int) -> None:
         params = {"symbol": symbol, "leverage": leverage}
-        await self._request(
-            "POST",
-            "/fapi/v1/leverage",
-            params=params,
-            signed=True,
-            benign_codes=frozenset({-4028}),
-        )
+        try:
+            await self._request(
+                "POST",
+                "/fapi/v1/leverage",
+                params=params,
+                signed=True,
+                benign_codes=frozenset({-4028}),
+            )
+        except (aiohttp.ClientResponseError, RetryError) as e:
+            if self._is_backend_timeout_error(e):
+                logger.warning(
+                    "set_leverage_timeout_skip",
+                    symbol=symbol,
+                    leverage=leverage,
+                )
+                return
+            raise
+
+    @staticmethod
+    def _is_backend_timeout_error(exc: BaseException) -> bool:
+        if isinstance(exc, RetryError):
+            cause = exc.last_attempt.exception()
+            if cause is not None:
+                return BinanceFuturesClient._is_backend_timeout_error(cause)
+            return False
+        if isinstance(exc, aiohttp.ClientResponseError):
+            return "1007" in str(exc.message)
+        return "1007" in str(exc)
 
     async def get_ticker(self, symbol: str) -> TickerInfo:
         params = {"symbol": symbol}

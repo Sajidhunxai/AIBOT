@@ -5,8 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from api.schemas.models import ClosePositionRequest, ManualTradeRequest
+from utils.logger import get_logger
 
 router = APIRouter(prefix="/controls", tags=["controls"])
+logger = get_logger(__name__)
 
 
 async def _close_positions(bot: object, body: ClosePositionRequest) -> list[dict[str, object]]:
@@ -143,7 +145,14 @@ async def start_bot(request: Request) -> dict[str, str]:
         return {"status": "already_running", "message": "Active account is already trading"}
 
     account = bot.account_manager.active_account
-    await bot.start_account(aid)
+    try:
+        await bot.start_account(aid)
+    except Exception as e:
+        logger.error("start_account_failed", account_id=aid, error=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not start trading: {e}",
+        ) from e
     account_name = account.name if account else "active account"
     return {
         "status": "started",
