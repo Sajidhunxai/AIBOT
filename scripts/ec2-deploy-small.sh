@@ -5,7 +5,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-PUBLIC_IP="${PUBLIC_IP:-$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "127.0.0.1")}"
+if [ -z "${PUBLIC_IP:-}" ]; then
+  _meta_token="$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)"
+  if [ -n "$_meta_token" ]; then
+    PUBLIC_IP="$(curl -sf -H "X-aws-ec2-metadata-token: $_meta_token" \
+      http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
+  else
+    PUBLIC_IP="$(curl -sf http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
+  fi
+  PUBLIC_IP="${PUBLIC_IP:-127.0.0.1}"
+fi
 
 echo "==> AIBotTrade EC2 deploy (IP: $PUBLIC_IP)"
 
@@ -19,9 +29,9 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
-# Postgres URLs are set by docker-compose.ec2-small.yml — point browser URLs at this server.
-sed -i "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=http://${PUBLIC_IP}:8000|" .env || true
-grep -q '^NEXT_PUBLIC_API_URL=' .env || echo "NEXT_PUBLIC_API_URL=http://${PUBLIC_IP}:8000" >> .env
+# CORS uses the browser origin; Next proxies /api/v1 to localhost (see next.config.js).
+sed -i "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=http://127.0.0.1:8000|" .env || true
+grep -q '^NEXT_PUBLIC_API_URL=' .env || echo "NEXT_PUBLIC_API_URL=http://127.0.0.1:8000" >> .env
 sed -i "s|^API_CORS_ORIGINS=.*|API_CORS_ORIGINS=http://${PUBLIC_IP}:3000,http://localhost:3000|" .env || true
 grep -q '^API_CORS_ORIGINS=' .env || echo "API_CORS_ORIGINS=http://${PUBLIC_IP}:3000,http://localhost:3000" >> .env
 
@@ -36,11 +46,16 @@ fi
 
 cd dashboard/frontend
 npm ci
-NEXT_PUBLIC_API_URL="http://${PUBLIC_IP}:8000" npm run build
+# Next runs on the host; proxy API via localhost (see next.config.js rewrites).
+NEXT_PUBLIC_API_URL="http://127.0.0.1:8000" npm run build
+mkdir -p .next/standalone/.next
+cp -r .next/static .next/standalone/.next/static
+cp -r public .next/standalone/public 2>/dev/null || true
+pkill -f ".next/standalone/server.js" 2>/dev/null || true
+nohup env PORT=3000 HOSTNAME=0.0.0.0 node .next/standalone/server.js > "$ROOT/dashboard.log" 2>&1 &
 
 echo ""
-echo "Done. Start dashboard in another screen/tmux:"
-echo "  cd $ROOT/dashboard/frontend && NEXT_PUBLIC_API_URL=http://${PUBLIC_IP}:8000 npm start"
+echo "Done. Dashboard running (standalone server, port 3000)."
 echo ""
 echo "Open: http://${PUBLIC_IP}:3000"
 echo "API:  http://${PUBLIC_IP}:8000"
