@@ -23,5 +23,8 @@ jobs:
           command_timeout: 30m
           script: |
             cd ~/AIBOT
+            git fetch origin main
+            git reset --hard origin/main
+            sed -i 's/\r$//' scripts/*.sh docker/entrypoint.sh 2>/dev/null || true
             chmod +x scripts/ec2-deploy-update.sh
             bash scripts/ec2-deploy-update.sh
