@@ -46,16 +46,7 @@ fi
 
 cd dashboard/frontend
 npm ci
-# Next runs on the host; proxy API via localhost (see next.config.js rewrites).
-NEXT_PUBLIC_API_URL="http://127.0.0.1:8000" npm run build
-mkdir -p .next/standalone/.next
-cp -r .next/static .next/standalone/.next/static
-cp -r public .next/standalone/public 2>/dev/null || true
-pkill -f ".next/standalone/server.js" 2>/dev/null || true
-nohup env PORT=3000 HOSTNAME=0.0.0.0 node .next/standalone/server.js > "$ROOT/dashboard.log" 2>&1 &
-
-echo ""
-echo "Done. Dashboard running (standalone server, port 3000)."
+bash "$ROOT/scripts/ec2-restart-dashboard.sh"
 echo ""
 echo "Open: http://${PUBLIC_IP}:3000"
 echo "API:  http://${PUBLIC_IP}:8000"

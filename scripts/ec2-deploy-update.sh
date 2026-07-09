@@ -6,9 +6,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.ec2-small.yml}"
 PUBLIC_IP="${PUBLIC_IP:-$(curl -sf --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)}"
-PUBLIC_IP="${PUBLIC_IP:-3.135.190.132}"
+PUBLIC_IP="${PUBLIC_IP:-18.222.16.206}"
 API_INTERNAL_URL="${API_INTERNAL_URL:-http://127.0.0.1:8000}"
 BRANCH="${DEPLOY_BRANCH:-main}"
 
@@ -22,6 +22,9 @@ else
   echo "ERROR: $ROOT is not a git repository" >&2
   exit 1
 fi
+
+sed -i 's/\r$//' scripts/*.sh docker/entrypoint.sh 2>/dev/null || true
+chmod +x scripts/ec2-deploy-update.sh scripts/ec2-restart-dashboard.sh 2>/dev/null || true
 
 if [ -f .env ]; then
   sed -i 's/\r$//' .env
@@ -37,13 +40,13 @@ sudo docker compose -f "$COMPOSE_FILE" up -d --build --force-recreate bot
 
 echo "==> Wait for API"
 for _ in $(seq 1 30); do
-  if curl -sf "${API_INTERNAL_URL}/api/v1/status" >/dev/null 2>&1; then
+  if curl -sf "${API_INTERNAL_URL}/health" >/dev/null 2>&1; then
     echo "API is up"
     break
   fi
   sleep 2
 done
-curl -sf "${API_INTERNAL_URL}/api/v1/status" | head -c 120 || { echo "API health check failed" >&2; exit 1; }
+curl -sf "${API_INTERNAL_URL}/health" || { echo "API health check failed" >&2; exit 1; }
 echo
 
 echo "==> Rebuild dashboard (host Node)"
@@ -54,21 +57,8 @@ fi
 
 cd dashboard/frontend
 npm ci
-NEXT_PUBLIC_API_URL="${API_INTERNAL_URL}" npm run build
-
-echo "==> Restart dashboard"
-pkill -f "next start" 2>/dev/null || true
-pkill -f "next-server" 2>/dev/null || true
-sleep 2
-nohup env NEXT_PUBLIC_API_URL="${API_INTERNAL_URL}" npm start > ~/dashboard.log 2>&1 &
-
-for _ in $(seq 1 20); do
-  if curl -sf http://127.0.0.1:3000/ >/dev/null 2>&1; then
-    echo "Dashboard is up"
-    break
-  fi
-  sleep 2
-done
+export NEXT_PUBLIC_API_URL="${API_INTERNAL_URL}"
+bash "$ROOT/scripts/ec2-restart-dashboard.sh"
 
 curl -s -o /dev/null -w "dashboard:%{http_code} api:%{http_code}\n" \
   http://127.0.0.1:3000/ "${API_INTERNAL_URL}/api/v1/status"
