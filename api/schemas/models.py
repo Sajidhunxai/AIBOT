@@ -240,8 +240,8 @@ class RiskSettingsUpdate(BaseModel):
     use_equity_for_limits: bool | None = None
     atr_stop_multiplier: float | None = Field(default=None, ge=0.5, le=10.0)
     take_profit_rr: float | None = Field(default=None, ge=0.5, le=10.0)
-    trailing_stop_atr_multiplier: float | None = Field(default=None, ge=0.5, le=10.0)
-    break_even_trigger_rr: float | None = Field(default=None, ge=0.1, le=5.0)
+    trailing_stop_atr_multiplier: float | None = Field(default=None, ge=0, le=10.0)
+    break_even_trigger_rr: float | None = Field(default=None, ge=0, le=5.0)
     position_size_method: str | None = Field(default=None, pattern="^(fixed_risk|fixed_amount)$")
 
 

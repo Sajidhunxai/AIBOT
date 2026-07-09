@@ -44,6 +44,13 @@ class TestStopManager:
         updated = manager.update_trailing(state, "LONG", 51000, atr=500)
         assert updated.stop_loss >= 49000
 
+    def test_trailing_disabled_when_multiplier_zero(self) -> None:
+        manager = StopManager(trailing_atr_multiplier=0, break_even_rr=0)
+        state = StopState(stop_loss=49000, take_profit=52000, highest_price=50000)
+        updated = manager.update_trailing(state, "LONG", 51000, atr=500)
+        assert updated.stop_loss == 49000
+        assert updated.trailing_stop is None
+
 
 def _context(
     balance: float = 10000,

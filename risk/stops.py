@@ -54,37 +54,49 @@ class StopManager:
         current_price: float,
         atr: float,
     ) -> StopState:
-        """Update trailing stop and break-even."""
-        trail_distance = atr * self.trailing_atr_multiplier
+        """Update trailing stop and break-even. Set multiplier/RR to 0 to disable."""
+        trailing_enabled = self.trailing_atr_multiplier > 0
+        break_even_enabled = self.break_even_rr > 0
+        trail_distance = atr * self.trailing_atr_multiplier if trailing_enabled else 0.0
 
         if side.upper() in ("LONG", "BUY"):
             state.highest_price = max(state.highest_price, current_price)
             risk = state.highest_price - (state.stop_loss if not state.break_even_triggered else state.highest_price)
             reward = current_price - (state.highest_price - risk)
 
-            if not state.break_even_triggered and reward >= risk * self.break_even_rr:
+            if (
+                break_even_enabled
+                and not state.break_even_triggered
+                and reward >= risk * self.break_even_rr
+            ):
                 state.stop_loss = state.highest_price - risk * 0.1
                 state.break_even_triggered = True
 
-            new_trail = state.highest_price - trail_distance
-            if state.trailing_stop is None or new_trail > state.trailing_stop:
-                state.trailing_stop = new_trail
-                if new_trail > state.stop_loss:
-                    state.stop_loss = new_trail
+            if trailing_enabled:
+                new_trail = state.highest_price - trail_distance
+                if state.trailing_stop is None or new_trail > state.trailing_stop:
+                    state.trailing_stop = new_trail
+                    if new_trail > state.stop_loss:
+                        state.stop_loss = new_trail
         else:
             state.lowest_price = min(state.lowest_price, current_price)
             risk = (state.stop_loss if not state.break_even_triggered else state.lowest_price) - state.lowest_price
             reward = (state.lowest_price + risk) - current_price
 
-            if not state.break_even_triggered and reward >= risk * self.break_even_rr:
+            if (
+                break_even_enabled
+                and not state.break_even_triggered
+                and reward >= risk * self.break_even_rr
+            ):
                 state.stop_loss = state.lowest_price + risk * 0.1
                 state.break_even_triggered = True
 
-            new_trail = state.lowest_price + trail_distance
-            if state.trailing_stop is None or new_trail < state.trailing_stop:
-                state.trailing_stop = new_trail
-                if new_trail < state.stop_loss:
-                    state.stop_loss = new_trail
+            if trailing_enabled:
+                new_trail = state.lowest_price + trail_distance
+                if state.trailing_stop is None or new_trail < state.trailing_stop:
+                    state.trailing_stop = new_trail
+                    if new_trail < state.stop_loss:
+                        state.stop_loss = new_trail
 
         return state
 
