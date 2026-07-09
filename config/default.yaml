@@ -52,6 +52,10 @@ risk:
   use_equity_for_limits: true
   atr_stop_multiplier: 2.0
   take_profit_rr: 2.0
+  take_profit_mode: support_resistance  # fixed_rr | support_resistance
+  sr_lookback_candles: 50
+  sr_min_rr: 0.75
+  sr_max_rr: 2.0
   trailing_stop_atr_multiplier: 1.5
   break_even_trigger_rr: 1.0
   position_size_method: fixed_risk  # fixed_risk | fixed_amount | kelly

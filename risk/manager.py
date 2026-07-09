@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pandas as pd
+
 from risk.position_sizer import PositionSizer
+from risk.sr_stops import compute_sr_stops
 from risk.stops import StopManager
 from strategies.base import Signal
 from utils.helpers import ensure_min_notional_quantity
@@ -59,6 +62,10 @@ class RiskManager:
         self.max_total_exposure_pct = float(config.get("max_total_exposure_pct", 40.0))
         self.block_duplicate_side = bool(config.get("block_duplicate_side", True))
         self.use_equity_for_limits = bool(config.get("use_equity_for_limits", True))
+        self.take_profit_mode = str(config.get("take_profit_mode", "fixed_rr")).lower()
+        self.sr_lookback_candles = int(config.get("sr_lookback_candles", 50))
+        self.sr_min_rr = float(config.get("sr_min_rr", 0.75))
+        self.sr_max_rr = float(config.get("sr_max_rr", 2.5))
 
         self.position_sizer = PositionSizer(
             risk_per_trade_pct=self.risk_per_trade_pct,
@@ -147,6 +154,10 @@ class RiskManager:
             "trailing_stop_atr_multiplier": self.stop_manager.trailing_atr_multiplier,
             "break_even_trigger_rr": self.stop_manager.break_even_rr,
             "position_size_method": self.position_sizer.method,
+            "take_profit_mode": self.take_profit_mode,
+            "sr_lookback_candles": self.sr_lookback_candles,
+            "sr_min_rr": self.sr_min_rr,
+            "sr_max_rr": self.sr_max_rr,
         }
 
     def apply_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
@@ -167,15 +178,22 @@ class RiskManager:
             "take_profit_rr",
             "trailing_stop_atr_multiplier",
             "break_even_trigger_rr",
+            "sr_min_rr",
+            "sr_max_rr",
         }
         bool_fields = {"block_duplicate_side", "use_equity_for_limits"}
+        int_fields_extra = {"sr_lookback_candles"}
 
         for key, value in updates.items():
             if value is None:
                 continue
             if key == "cooldown_after_loss_minutes":
                 self.cooldown_minutes = int(value)
-            elif key in int_fields:
+            elif key == "take_profit_mode" and isinstance(value, str):
+                mode = value.lower()
+                if mode in ("fixed_rr", "support_resistance"):
+                    self.take_profit_mode = mode
+            elif key in int_fields or key in int_fields_extra:
                 setattr(self, key, int(value))
             elif key in float_fields:
                 if key == "atr_stop_multiplier":
@@ -221,6 +239,7 @@ class RiskManager:
         lot_step: float = 0.001,
         min_notional: float = 0.0,
         min_qty: float = 0.0,
+        candles: pd.DataFrame | None = None,
     ) -> RiskCheckResult:
         """Validate signal against all risk rules."""
         self.set_balance(context.balance)
@@ -240,7 +259,19 @@ class RiskManager:
         stop_loss = signal.stop_loss
         take_profit = signal.take_profit
         side = "LONG" if signal.action.value == "BUY" else "SHORT"
-        if stop_loss is None or take_profit is None:
+        if self.take_profit_mode == "support_resistance" and candles is not None and not candles.empty:
+            stop_loss, take_profit, _ = compute_sr_stops(
+                side,
+                signal.price,
+                candles,
+                atr,
+                lookback=self.sr_lookback_candles,
+                atr_stop_multiplier=self.stop_manager.atr_multiplier,
+                fallback_take_profit_rr=self.stop_manager.take_profit_rr,
+                min_rr=self.sr_min_rr,
+                max_rr=self.sr_max_rr,
+            )
+        elif stop_loss is None or take_profit is None:
             stop_loss, take_profit = self.stop_manager.initial_stops(side, signal.price, atr)
         elif stop_loss is not None:
             take_profit = self._align_take_profit_to_rr(side, signal.price, stop_loss, take_profit)

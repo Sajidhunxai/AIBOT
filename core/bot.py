@@ -839,6 +839,7 @@ class TradingBot:
             lot_step=filters.step_size,
             min_notional=filters.min_notional,
             min_qty=filters.min_qty,
+            candles=candles,
         )
         if not risk_result.approved:
             logger.info(

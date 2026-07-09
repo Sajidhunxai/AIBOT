@@ -218,6 +218,10 @@ class RiskSettingsResponse(BaseModel):
     trailing_stop_atr_multiplier: float
     break_even_trigger_rr: float
     position_size_method: str = "fixed_risk"
+    take_profit_mode: str = "fixed_rr"
+    sr_lookback_candles: int = 50
+    sr_min_rr: float = 0.75
+    sr_max_rr: float = 2.5
     trading_halted: bool = False
     halt_reason: str = ""
     open_positions: int = 0
@@ -243,6 +247,10 @@ class RiskSettingsUpdate(BaseModel):
     trailing_stop_atr_multiplier: float | None = Field(default=None, ge=0, le=10.0)
     break_even_trigger_rr: float | None = Field(default=None, ge=0, le=5.0)
     position_size_method: str | None = Field(default=None, pattern="^(fixed_risk|fixed_amount)$")
+    take_profit_mode: str | None = Field(default=None, pattern="^(fixed_rr|support_resistance)$")
+    sr_lookback_candles: int | None = Field(default=None, ge=10, le=500)
+    sr_min_rr: float | None = Field(default=None, ge=0.25, le=10.0)
+    sr_max_rr: float | None = Field(default=None, ge=0.5, le=10.0)
 
 
 class StrategiesSettingsResponse(BaseModel):

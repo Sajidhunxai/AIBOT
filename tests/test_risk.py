@@ -161,3 +161,18 @@ class TestRiskManager:
         result = manager.check_signal(signal, _context(), atr=500)
         assert result.approved
         assert result.take_profit == 51250.0
+
+    def test_support_resistance_mode(self, risk_config: dict, sample_ohlcv) -> None:
+        manager = RiskManager(
+            {
+                **risk_config,
+                "take_profit_mode": "support_resistance",
+                "take_profit_rr": 1.25,
+            }
+        )
+        signal = _buy_signal()
+        result = manager.check_signal(signal, _context(), atr=500, candles=sample_ohlcv)
+        assert result.approved
+        assert result.stop_loss is not None
+        assert result.take_profit is not None
+        assert result.take_profit > signal.price
