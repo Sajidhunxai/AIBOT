@@ -145,3 +145,19 @@ class TestRiskManager:
         result = manager.check_signal(_buy_signal(), _context(), atr=500)
         assert not result.approved
         assert result.reason == "cooldown_after_loss"
+
+    def test_take_profit_uses_account_rr(self, risk_config: dict) -> None:
+        manager = RiskManager({**risk_config, "take_profit_rr": 1.25})
+        signal = Signal(
+            symbol="BTCUSDT",
+            action=SignalType.BUY,
+            price=50000,
+            confidence=0.8,
+            strategy="ema_cross_rsi",
+            timeframe="15m",
+            stop_loss=49000,
+            take_profit=52000,
+        )
+        result = manager.check_signal(signal, _context(), atr=500)
+        assert result.approved
+        assert result.take_profit == 51250.0

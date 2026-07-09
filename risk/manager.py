@@ -197,6 +197,22 @@ class RiskManager:
         logger.info("risk_settings_applied", updates=list(updates.keys()))
         return self.get_settings()
 
+    def _align_take_profit_to_rr(
+        self,
+        side: str,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: float,
+    ) -> float:
+        """Use account take_profit_rr instead of each strategy's hardcoded TP."""
+        sl_distance = abs(entry_price - stop_loss)
+        if sl_distance <= 0:
+            return take_profit
+        rr = self.stop_manager.take_profit_rr
+        if side.upper() in ("LONG", "BUY"):
+            return entry_price + sl_distance * rr
+        return entry_price - sl_distance * rr
+
     def check_signal(
         self,
         signal: Signal,
@@ -223,9 +239,11 @@ class RiskManager:
 
         stop_loss = signal.stop_loss
         take_profit = signal.take_profit
+        side = "LONG" if signal.action.value == "BUY" else "SHORT"
         if stop_loss is None or take_profit is None:
-            side = "LONG" if signal.action.value == "BUY" else "SHORT"
             stop_loss, take_profit = self.stop_manager.initial_stops(side, signal.price, atr)
+        elif stop_loss is not None:
+            take_profit = self._align_take_profit_to_rr(side, signal.price, stop_loss, take_profit)
 
         quantity = self.position_sizer.calculate(
             balance=context.equity if self.use_equity_for_limits else context.balance,

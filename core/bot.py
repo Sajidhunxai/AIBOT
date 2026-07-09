@@ -613,13 +613,15 @@ class TradingBot:
                     if trade["pnl"] < 0:
                         risk.record_loss()
         elif self.config.get("orders.update_exchange_trailing_sl", True):
-            candles = self.market_data.get_candles(symbol, self.config.primary_timeframe)
-            atr_val = (
-                float(atr(candles, 14).values.iloc[-1]) if not candles.empty else price * 0.01
-            )
-            await self._update_exchange_trailing_stops(
-                account_id, symbol, price, risk, atr_val
-            )
+            sm = risk.stop_manager
+            if sm.trailing_atr_multiplier > 0 or sm.break_even_rr > 0:
+                candles = self.market_data.get_candles(symbol, self.config.primary_timeframe)
+                atr_val = (
+                    float(atr(candles, 14).values.iloc[-1]) if not candles.empty else price * 0.01
+                )
+                await self._update_exchange_trailing_stops(
+                    account_id, symbol, price, risk, atr_val
+                )
 
         if risk.trading_halted:
             return
