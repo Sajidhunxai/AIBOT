@@ -118,7 +118,7 @@ orders:
   limit_offset_pct: 0.05
   time_in_force: GTC
   place_exchange_sl_tp: true
-  update_exchange_trailing_sl: false  # move Binance SL on break-even / trailing (testnet/live)
+  update_exchange_trailing_sl: true  # break-even only (trailing multiplier 0 disables trail tightening)
   min_trailing_sl_move_pct: 0.05  # minimum SL change before replacing exchange order
 
 market_data:
