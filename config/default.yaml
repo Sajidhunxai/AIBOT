@@ -20,6 +20,8 @@ exchange:
 symbols:
   - BTCUSDT
   - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
 
 timeframes:
   - 1m
@@ -36,6 +38,8 @@ leverage:
   per_symbol:
     BTCUSDT: 10
     ETHUSDT: 10
+    SOLUSDT: 10
+    BNBUSDT: 10
 
 risk:
   risk_per_trade_pct: 1.0

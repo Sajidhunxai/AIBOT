@@ -1665,7 +1665,9 @@ class TradingBot:
             return db_rows
 
         # Prefer bot-recorded trades (correct strategy names) on testnet/live.
-        if db_rows:
+        # After a demo reset the DB is intentionally empty — do not refill from
+        # Binance income history or old fills pollute the dashboard again.
+        if db_account_id is not None:
             db_rows.sort(key=lambda t: _as_utc_aware(t["closed_at"]), reverse=True)
             return db_rows[:limit]
 

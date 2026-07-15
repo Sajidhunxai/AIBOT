@@ -62,6 +62,8 @@ class RiskManager:
         self.max_total_exposure_pct = float(config.get("max_total_exposure_pct", 40.0))
         self.block_duplicate_side = bool(config.get("block_duplicate_side", True))
         self.use_equity_for_limits = bool(config.get("use_equity_for_limits", True))
+        # Trade as if the account only has this much capital (0 = use full wallet).
+        self.capital_cap = float(config.get("capital_cap", 0.0))
         self.take_profit_mode = str(config.get("take_profit_mode", "fixed_rr")).lower()
         self.sr_lookback_candles = int(config.get("sr_lookback_candles", 50))
         self.sr_min_rr = float(config.get("sr_min_rr", 0.75))
@@ -154,6 +156,7 @@ class RiskManager:
             "trailing_stop_atr_multiplier": self.stop_manager.trailing_atr_multiplier,
             "break_even_trigger_rr": self.stop_manager.break_even_rr,
             "position_size_method": self.position_sizer.method,
+            "capital_cap": self.capital_cap,
             "take_profit_mode": self.take_profit_mode,
             "sr_lookback_candles": self.sr_lookback_candles,
             "sr_min_rr": self.sr_min_rr,
@@ -180,6 +183,7 @@ class RiskManager:
             "break_even_trigger_rr",
             "sr_min_rr",
             "sr_max_rr",
+            "capital_cap",
         }
         bool_fields = {"block_duplicate_side", "use_equity_for_limits"}
         int_fields_extra = {"sr_lookback_candles"}
@@ -231,6 +235,17 @@ class RiskManager:
             return entry_price + sl_distance * rr
         return entry_price - sl_distance * rr
 
+    def _capped_context(self, context: RiskContext) -> RiskContext:
+        """Clamp balance/equity so sizing acts like a smaller account."""
+        if self.capital_cap <= 0:
+            return context
+        return RiskContext(
+            balance=min(context.balance, self.capital_cap),
+            equity=min(context.equity, self.capital_cap),
+            open_positions=context.open_positions,
+            unrealized_pnl=context.unrealized_pnl,
+        )
+
     def check_signal(
         self,
         signal: Signal,
@@ -242,6 +257,7 @@ class RiskManager:
         candles: pd.DataFrame | None = None,
     ) -> RiskCheckResult:
         """Validate signal against all risk rules."""
+        context = self._capped_context(context)
         self.set_balance(context.balance)
         self.set_equity(context.equity)
 
@@ -325,6 +341,7 @@ class RiskManager:
         min_qty: float = 0.0,
     ) -> RiskCheckResult:
         """Validate a manual trade against position and loss limits."""
+        context = self._capped_context(context)
         self.set_balance(context.balance)
         self.set_equity(context.equity)
 

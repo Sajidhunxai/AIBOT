@@ -158,11 +158,11 @@ class TradeRepository:
         return int(result.rowcount or 0)
 
     async def delete_demo_history(self, account_id: int) -> int:
-        """Remove paper trades for account plus legacy rows without account_id."""
+        """Remove all trades for a demo account (paper + testnet DB rows)."""
         result = await self.session.execute(
             delete(Trade).where(
-                Trade.is_paper.is_(True),
-                (Trade.account_id == account_id) | (Trade.account_id.is_(None)),
+                (Trade.account_id == account_id)
+                | (Trade.account_id.is_(None) & Trade.is_paper.is_(True))
             )
         )
         return int(result.rowcount or 0)
